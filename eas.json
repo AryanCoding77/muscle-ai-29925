@@ -1,36 +1,32 @@
 {
   "cli": {
     "version": ">= 16.20.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "remote",
+    "requireCommit": true
   },
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal",
-      "requireCommit": true
+      "distribution": "internal"
     },
     "preview": {
       "distribution": "internal",
-      "requireCommit": true,
       "android": {
         "buildType": "apk"
       }
     },
     "production": {
       "autoIncrement": true,
-      "requireCommit": true,
       "android": {
         "buildType": "app-bundle"
       }
     },
     "apk": {
-      "requireCommit": true,
       "android": {
         "buildType": "apk"
       }
     },
     "aab": {
-      "requireCommit": true,
       "android": {
         "buildType": "app-bundle"
       }
