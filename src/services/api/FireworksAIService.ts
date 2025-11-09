@@ -127,20 +127,33 @@ export class FireworksAIService {
         retryCount: 0,
       });
 
-      // Prepare request
+      // Prepare request with primary model
       console.log('📝 Preparing API request...');
-      const request = this.prepareRequest(processedImage.base64);
-      console.log('✅ Request prepared with model:', API_CONFIG.FIREWORKS_MODEL);
+      let request = this.prepareRequest(processedImage.base64, false);
+      console.log('✅ Request prepared with model:', request.model);
       console.log('📊 Request tokens limit:', request.max_tokens);
 
       // Execute with retry logic
       console.log('🌐 Sending request to Fireworks AI...');
-      const response = await this.executeWithRetry(
-        request,
-        retryCount,
-        onProgress
-      );
-      console.log('✅ Received response from API');
+      let response;
+      try {
+        response = await this.executeWithRetry(
+          request,
+          retryCount,
+          onProgress
+        );
+        console.log('✅ Received response from API');
+      } catch (primaryError) {
+        console.warn('⚠️ Primary model failed, trying fallback model...');
+        console.log('🔄 Preparing fallback request...');
+        request = this.prepareRequest(processedImage.base64, true);
+        response = await this.executeWithRetry(
+          request,
+          0, // Reset retry count for fallback
+          onProgress
+        );
+        console.log('✅ Received response from fallback model');
+      }
 
       // Parse and validate response
       console.log('🔄 Parsing API response...');
@@ -180,9 +193,12 @@ export class FireworksAIService {
     }
   }
 
-  private prepareRequest(base64Image: string): AIChatRequest {
+  private prepareRequest(base64Image: string, useFallbackModel: boolean = false): AIChatRequest {
+    const model = useFallbackModel ? API_CONFIG.FIREWORKS_MODEL_FALLBACK : API_CONFIG.FIREWORKS_MODEL;
+    console.log(`📋 Using model: ${model}${useFallbackModel ? ' (fallback)' : ' (primary)'}`);
+    
     return {
-      model: API_CONFIG.FIREWORKS_MODEL,
+      model,
       messages: [
         {
           role: 'user',

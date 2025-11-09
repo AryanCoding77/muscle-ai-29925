@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS } from '../../config/constants';
 
 const { width } = Dimensions.get('window');
@@ -20,6 +21,8 @@ interface ResponsiveHeaderProps {
   subtitle: string;
   onSettingsPress: () => void;
   onNotificationPress?: () => void;
+  onProfilePress?: () => void;
+  notificationCount?: number;
 }
 
 const ResponsiveHeaderBase: React.FC<ResponsiveHeaderProps> = ({
@@ -28,6 +31,8 @@ const ResponsiveHeaderBase: React.FC<ResponsiveHeaderProps> = ({
   subtitle,
   onSettingsPress,
   onNotificationPress,
+  onProfilePress,
+  notificationCount = 0,
 }) => {
   const isSmallScreen = width < 380;
   const isTablet = width >= 768;
@@ -46,13 +51,26 @@ const ResponsiveHeaderBase: React.FC<ResponsiveHeaderProps> = ({
     onSettingsPress();
   };
 
+  const handleProfilePress = async () => {
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+    onProfilePress?.();
+  };
+
   return (
-    <View style={[
-      styles.container,
-      isTablet && styles.containerTablet,
-      isSmallScreen && styles.containerSmall
-    ]}>
-      <View style={styles.leftSection}>
+    <View>
+      <View style={[
+        styles.container,
+        isTablet && styles.containerTablet,
+        isSmallScreen && styles.containerSmall
+      ]}>
+        <TouchableOpacity 
+        style={styles.leftSection}
+        onPress={handleProfilePress}
+        activeOpacity={0.7}
+        disabled={!onProfilePress}
+      >
         <View style={[
           styles.avatar,
           isSmallScreen && styles.avatarSmall,
@@ -102,7 +120,7 @@ const ResponsiveHeaderBase: React.FC<ResponsiveHeaderProps> = ({
             {subtitle}
           </Text>
         </View>
-      </View>
+      </TouchableOpacity>
       
       <View style={styles.rightSection}>
         <TouchableOpacity
@@ -120,19 +138,21 @@ const ResponsiveHeaderBase: React.FC<ResponsiveHeaderProps> = ({
               size={isSmallScreen ? 18 : isTablet ? 24 : 20} 
               color={COLORS.text} 
             />
-            <View style={[
-              styles.notificationBadge,
-              isSmallScreen && styles.notificationBadgeSmall,
-              isTablet && styles.notificationBadgeTablet
-            ]}>
-              <Text style={[
-                styles.badgeText,
-                isSmallScreen && styles.badgeTextSmall,
-                isTablet && styles.badgeTextTablet
+            {notificationCount > 0 && (
+              <View style={[
+                styles.notificationBadge,
+                isSmallScreen && styles.notificationBadgeSmall,
+                isTablet && styles.notificationBadgeTablet
               ]}>
-                1
-              </Text>
-            </View>
+                <Text style={[
+                  styles.badgeText,
+                  isSmallScreen && styles.badgeTextSmall,
+                  isTablet && styles.badgeTextTablet
+                ]}>
+                  {notificationCount > 99 ? '99+' : notificationCount}
+                </Text>
+              </View>
+            )}
           </View>
         </TouchableOpacity>
         
@@ -152,6 +172,14 @@ const ResponsiveHeaderBase: React.FC<ResponsiveHeaderProps> = ({
           />
         </TouchableOpacity>
       </View>
+      </View>
+      
+      {/* Fade effect at the bottom */}
+      <LinearGradient
+        colors={[COLORS.background, 'transparent']}
+        style={styles.fadeGradient}
+        pointerEvents="none"
+      />
     </View>
   );
 };
@@ -169,7 +197,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginHorizontal: 8,
     marginTop: 40,
-    marginBottom: 20,
+    marginBottom: 0,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -190,7 +218,7 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
     marginHorizontal: 12,
     marginTop: 60,
-    marginBottom: 32,
+    marginBottom: 0,
     borderRadius: 24,
   },
   containerSmall: {
@@ -198,7 +226,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     marginHorizontal: 6,
     marginTop: 30,
-    marginBottom: 16,
+    marginBottom: 0,
     borderRadius: 16,
   },
   leftSection: {
@@ -353,5 +381,13 @@ const styles = StyleSheet.create({
   },
   badgeTextSmall: {
     fontSize: 7,
+  },
+  fadeGradient: {
+    position: 'absolute',
+    bottom: -20,
+    left: 0,
+    right: 0,
+    height: 20,
+    zIndex: 10,
   },
 });

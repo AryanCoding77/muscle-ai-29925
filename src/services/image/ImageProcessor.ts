@@ -1,7 +1,7 @@
 // Image Processing Service - Handles image optimization and preparation
 
 import * as ImageManipulator from 'expo-image-manipulator';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { IMAGE_CONFIG } from '../../config/constants';
 import { ImageProcessingOptions } from '../../types/api.types';
 
@@ -86,7 +86,7 @@ export class ImageProcessor {
 
     } catch (error) {
       console.error('Image processing failed:', error);
-      throw new Error(`Failed to process image: ${error.message}`);
+      throw new Error(`Failed to process image: ${(error as Error).message}`);
     }
   }
 
@@ -118,7 +118,7 @@ export class ImageProcessor {
     size: number;
   }> {
     try {
-      const fileInfo = await FileSystem.getInfoAsync(imageUri);
+      const fileInfo = await FileSystem.getInfoAsync(imageUri) as any;
       
       // Get image dimensions using ImageManipulator
       const imageAsset = await ImageManipulator.manipulateAsync(
@@ -130,7 +130,7 @@ export class ImageProcessor {
       return {
         width: imageAsset.width,
         height: imageAsset.height,
-        size: fileInfo.size || 0,
+        size: (fileInfo.exists && fileInfo.size) ? fileInfo.size : 0,
       };
     } catch (error) {
       throw new Error('Failed to get image information');

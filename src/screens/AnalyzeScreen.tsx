@@ -6,6 +6,7 @@ import {
   StyleSheet,
   ScrollView,
   Image,
+  ImageBackground,
   Alert,
   Modal,
   TextInput,
@@ -13,19 +14,24 @@ import {
   Dimensions,
   SafeAreaView,
 } from 'react-native';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { useAPIAnalysis } from '../hooks/useAPIAnalysis';
 import { COLORS } from '../config/constants';
 import { APIErrorCode } from '../types/api.types';
-import { saveAnalysisToDatabase, supabase } from '../services/supabase';
+import { saveAnalysisWithImageUpload, supabase } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
+import { getUserSubscriptionDetails } from '../services/subscriptionService';
 
 const { width } = Dimensions.get('window');
 
 export const AnalyzeScreen = ({ navigation }: any) => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showProgress, setShowProgress] = useState(false);
+  const [hasActiveSubscription, setHasActiveSubscription] = useState(false);
+  const [checkingSubscription, setCheckingSubscription] = useState(true);
   const { user } = useAuth();
 
   const {
@@ -35,6 +41,26 @@ export const AnalyzeScreen = ({ navigation }: any) => {
     cancel,
     getCacheStats,
   } = useAPIAnalysis();
+
+  // Check subscription status on component mount
+  React.useEffect(() => {
+    checkSubscriptionStatus();
+  }, []);
+
+  const checkSubscriptionStatus = async () => {
+    try {
+      setCheckingSubscription(true);
+      const subscription = await getUserSubscriptionDetails();
+      const isActive = subscription?.subscription_status === 'active';
+      setHasActiveSubscription(isActive);
+      console.log('🔒 Subscription check:', isActive ? 'Active' : 'Inactive');
+    } catch (error) {
+      console.error('Error checking subscription:', error);
+      setHasActiveSubscription(false);
+    } finally {
+      setCheckingSubscription(false);
+    }
+  };
 
   const pickImage = async (source: 'camera' | 'gallery') => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -68,6 +94,26 @@ export const AnalyzeScreen = ({ navigation }: any) => {
 
   const handleAnalyze = async () => {
     if (!selectedImage) return;
+
+    // Check if user has active subscription
+    if (!hasActiveSubscription) {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert(
+        '🔒 Premium Feature',
+        'You need an active subscription to analyze images. Please purchase a plan to continue.',
+        [
+          {
+            text: 'View Plans',
+            onPress: () => navigation.navigate('SubscriptionPlans'),
+          },
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+        ]
+      );
+      return;
+    }
     
     console.log('🎬 === USER INITIATED ANALYSIS ===');
     console.log('📸 Selected Image:', selectedImage);
@@ -80,7 +126,7 @@ export const AnalyzeScreen = ({ navigation }: any) => {
       const analysisResult = await analyzeImage(selectedImage);
       
       if (analysisResult) {
-        console.log('✅ Analysis completed successfully, saving to database and navigating to results');
+        console.log('✅ Analysis completed successfully, uploading image and saving to database...');
         try {
           if (!user?.id) {
             console.error('No authenticated user found');
@@ -90,7 +136,8 @@ export const AnalyzeScreen = ({ navigation }: any) => {
 
           const overallScore = analysisResult.overall_assessment?.overall_physique_score ?? 0;
           
-          const analysisId = await saveAnalysisToDatabase(
+          // Use the new function that uploads image to cloud storage first
+          const analysisId = await saveAnalysisWithImageUpload(
             user.id,
             analysisResult,
             overallScore,
@@ -98,7 +145,7 @@ export const AnalyzeScreen = ({ navigation }: any) => {
           );
 
           if (analysisId) {
-            console.log('✅ Analysis saved to database with ID:', analysisId);
+            console.log('✅ Analysis and image saved successfully with ID:', analysisId);
           } else {
             console.error('Failed to save analysis to database');
             Alert.alert('Save Error', 'Failed to save analysis results. Please try again.');
@@ -154,6 +201,86 @@ export const AnalyzeScreen = ({ navigation }: any) => {
       }`
     );
   };
+
+  // Show loading state while checking subscription
+  if (checkingSubscription) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text style={styles.loadingText}>Checking subscription...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Show subscription required message if no active subscription
+  if (!hasActiveSubscription) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <ImageBackground
+          source={require('../../assets/pre-analyze-demo.png')}
+          style={styles.backgroundImage}
+          resizeMode="cover"
+        >
+          <BlurView intensity={100} tint="dark" style={styles.blurContainer}>
+            <View style={styles.darkOverlay} />
+            <View style={styles.premiumOverlayContainer}>
+              {/* Premium Card */}
+              <View style={styles.premiumCard}>
+                <View style={styles.cardContent}>
+                  {/* Lock Icon with Glow */}
+                  <View style={styles.lockContainer}>
+                    <View style={styles.lockGlow} />
+                    <Text style={styles.lockIconNew}>🔒</Text>
+                  </View>
+
+                  {/* Title */}
+                  <Text style={styles.premiumTitle}>Premium Feature</Text>
+                  
+                  {/* Subtitle */}
+                  <Text style={styles.premiumSubtitle}>Unlock AI Analysis</Text>
+
+                  {/* Feature List */}
+                  <View style={styles.featureList}>
+                    <View style={styles.featureItem}>
+                      <Text style={styles.featureIcon}>✨</Text>
+                      <Text style={styles.featureText}>Advanced Muscle Analysis</Text>
+                    </View>
+                    <View style={styles.featureItem}>
+                      <Text style={styles.featureIcon}>📊</Text>
+                      <Text style={styles.featureText}>Detailed Progress Tracking</Text>
+                    </View>
+                    <View style={styles.featureItem}>
+                      <Text style={styles.featureIcon}>🎯</Text>
+                      <Text style={styles.featureText}>Personalized Recommendations</Text>
+                    </View>
+                  </View>
+
+                  {/* CTA Button */}
+                  <TouchableOpacity
+                    onPress={() => navigation.navigate('SubscriptionPlans')}
+                    activeOpacity={0.8}
+                    style={styles.buttonContainer}
+                  >
+                    <LinearGradient
+                      colors={['#007AFF', '#0051D5']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.upgradeButton}
+                    >
+                      <Text style={styles.upgradeButtonText}>Upgrade Now</Text>
+                      <Text style={styles.upgradeButtonIcon}>→</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </BlurView>
+        </ImageBackground>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -267,10 +394,13 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 20,
+    minHeight: Dimensions.get('window').height - 100,
+    justifyContent: 'center',
   },
   header: {
     alignItems: 'center',
-    marginBottom: 30,
+    marginBottom: 40,
+    marginTop: 60,
   },
   title: {
     fontSize: 32,
@@ -388,7 +518,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     borderRadius: 16,
     padding: 20,
-    marginBottom: 30,
+    marginBottom: 40,
   },
   uploadArea: {
     borderWidth: 2,
@@ -493,5 +623,137 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: COLORS.textSecondary,
+  },
+  backgroundImage: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  blurContainer: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  darkOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  premiumOverlayContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  premiumCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: 'rgba(28, 28, 30, 0.95)',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  cardContent: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  lockContainer: {
+    position: 'relative',
+    marginBottom: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lockGlow: {
+    position: 'absolute',
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: 'rgba(0, 122, 255, 0.3)',
+    opacity: 0.6,
+  },
+  lockIconNew: {
+    fontSize: 64,
+  },
+  premiumTitle: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: COLORS.text,
+    marginBottom: 8,
+    textAlign: 'center',
+    letterSpacing: 0.5,
+  },
+  premiumSubtitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: COLORS.primary,
+    marginBottom: 32,
+    textAlign: 'center',
+  },
+  featureList: {
+    width: '100%',
+    marginBottom: 32,
+    gap: 16,
+  },
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    padding: 14,
+    borderRadius: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: COLORS.primary,
+  },
+  featureIcon: {
+    fontSize: 24,
+    marginRight: 12,
+  },
+  featureText: {
+    fontSize: 15,
+    color: COLORS.text,
+    fontWeight: '500',
+    flex: 1,
+  },
+  buttonContainer: {
+    width: '100%',
+  },
+  upgradeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 18,
+    paddingHorizontal: 32,
+    borderRadius: 16,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  upgradeButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+    marginRight: 8,
+  },
+  upgradeButtonIcon: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: 'bold',
   },
 });

@@ -1,7 +1,8 @@
 // Application Constants and Configuration
 
 export const API_CONFIG = {
-  FIREWORKS_MODEL: process.env.EXPO_PUBLIC_FIREWORKS_MODEL || 'accounts/fireworks/models/llama-v3p2-11b-vision-instruct',
+  FIREWORKS_MODEL: process.env.EXPO_PUBLIC_FIREWORKS_MODEL || 'accounts/fireworks/models/qwen2p5-vl-3b-instruct',
+  FIREWORKS_MODEL_FALLBACK: 'accounts/fireworks/models/qwen2p5-vl-32b-instruct',
   MAX_TOKENS: 2500,
   TEMPERATURE: 0.1,
   TOP_P: 0.9,
@@ -103,6 +104,7 @@ Only analyze clearly visible muscles. If image quality is poor or muscles are no
 
 export const COLORS = {
   primary: '#007AFF',
+  primaryDark: '#0051D5',
   secondary: '#5856D6',
   success: '#34C759',
   warning: '#FF9500',

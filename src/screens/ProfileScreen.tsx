@@ -12,10 +12,13 @@ import {
   ImageBackground,
   Dimensions,
   Image,
+  ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS } from '../config/constants';
 import { WaveGraph } from '../components/ui/WaveGraph';
@@ -24,7 +27,11 @@ import { StatBadge } from '../components/dashboard/StatBadge';
 import { MaterialCommunityIcons as Icon, Ionicons } from '@expo/vector-icons';
 import { AnalysisResult } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { updateUserProfile, getAnalysisHistory, AnalysisHistoryRecord } from '../services/supabase';
+import { updateUserProfile, getAnalysisHistory, AnalysisHistoryRecord, supabase } from '../services/supabase';
+import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
+import { ImagePickerDialog } from '../components/ui/ImagePickerDialog';
+import { getUserSubscriptionDetails } from '../services/subscriptionService';
+import { SubscriptionDetails } from '../types/subscription';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -104,6 +111,15 @@ export const ProfileScreen = ({ navigation }: any) => {
   });
   const [showEditModal, setShowEditModal] = useState(false);
   const [editUsername, setEditUsername] = useState('');
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [subscription, setSubscription] = useState<SubscriptionDetails | null>(null);
+  const [hasActiveSubscription, setHasActiveSubscription] = useState(false);
+  
+  // Confirmation dialog states
+  const [showSignOutDialog, setShowSignOutDialog] = useState(false);
+  const [showResetDialog, setShowResetDialog] = useState(false);
+  const [showImagePickerDialog, setShowImagePickerDialog] = useState(false);
 
   useEffect(() => {
     if (user || authProfile) {
@@ -125,6 +141,11 @@ export const ProfileScreen = ({ navigation }: any) => {
         console.log('No authenticated user, skipping profile load');
         return;
       }
+
+      // Load subscription status
+      const subscriptionData = await getUserSubscriptionDetails();
+      setSubscription(subscriptionData);
+      setHasActiveSubscription(subscriptionData?.subscription_status === 'active');
 
       // Load analysis history from database to calculate stats
       const dbHistory = await getAnalysisHistory(user.id);
@@ -204,64 +225,208 @@ export const ProfileScreen = ({ navigation }: any) => {
     }
   };
 
-  const handleEditUsername = async () => {
+  const handleEditProfile = async () => {
     if (!editUsername.trim()) {
       Alert.alert('Error', 'Please enter a valid username');
       return;
     }
 
+    setIsUploading(true);
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     
-    // Update in Supabase if authenticated
-    if (user && authProfile) {
-      const success = await updateUserProfile(user.id, {
-        username: editUsername.trim(),
-      });
+    try {
+      let avatarUrl = authProfile?.avatar_url;
       
-      if (success) {
-        await refreshProfile();
+      // Upload new profile image if selected
+      if (selectedImage) {
+        const uploadedUrl = await uploadProfileImage(selectedImage);
+        if (!uploadedUrl) {
+          Alert.alert('Error', 'Failed to upload profile image');
+          setIsUploading(false);
+          return;
+        }
+        avatarUrl = uploadedUrl;
       }
+      
+      // Update in Supabase if authenticated
+      if (user) {
+        const updateData: any = {
+          username: editUsername.trim(),
+        };
+        
+        if (avatarUrl) {
+          updateData.avatar_url = avatarUrl;
+        }
+        
+        const success = await updateUserProfile(user.id, updateData);
+        
+        if (success) {
+          await refreshProfile();
+          // Update local profile state
+          const updatedProfile = {
+            ...profile,
+            username: editUsername.trim(),
+          };
+          setProfile(updatedProfile);
+          
+          setShowEditModal(false);
+          setEditUsername('');
+          setSelectedImage(null);
+          Alert.alert('Success', 'Profile updated successfully');
+        } else {
+          Alert.alert('Error', 'Failed to update profile. Please try again.');
+        }
+      }
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+    } finally {
+      setIsUploading(false);
     }
-    
-    const updatedProfile = {
-      ...profile,
-      username: editUsername.trim(),
-    };
+  };
 
-    setProfile(updatedProfile);
-    setShowEditModal(false);
-    setEditUsername('');
-    
-    Alert.alert('Success', 'Username updated successfully');
+  const uploadProfileImage = async (imageUri: string): Promise<string | null> => {
+    try {
+      console.log('🖼️ Starting image upload for URI:', imageUri);
+      
+      // Get file extension
+      const fileExt = imageUri.split('.').pop()?.toLowerCase() || 'jpg';
+      const fileName = `${Date.now()}.${fileExt}`;
+      const filePath = `${user?.id}/${fileName}`;
+
+      console.log('📁 Upload path:', filePath);
+
+      // Read the file as base64
+      const base64 = await FileSystem.readAsStringAsync(imageUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      console.log('📄 File read as base64, length:', base64.length);
+
+      // Convert base64 to binary for upload
+      const { data, error } = await supabase.storage
+        .from('profile-images')
+        .upload(filePath, decode(base64), {
+          contentType: `image/${fileExt}`,
+          upsert: true
+        });
+
+      if (error) {
+        console.error('❌ Error uploading image:', error);
+        
+        // Provide more specific error messages
+        if (error.message?.includes('bucket')) {
+          console.error('🪣 Storage bucket issue - make sure profile-images bucket exists');
+        } else if (error.message?.includes('policy')) {
+          console.error('🔒 Storage policy issue - check RLS policies');
+        } else if (error.message?.includes('size')) {
+          console.error('📏 File size issue - image might be too large');
+        }
+        
+        return null;
+      }
+
+      console.log('✅ Image uploaded successfully:', data);
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('profile-images')
+        .getPublicUrl(filePath);
+
+      console.log('🔗 Public URL generated:', publicUrl);
+      return publicUrl;
+    } catch (error) {
+      console.error('❌ Error in uploadProfileImage:', error);
+      return null;
+    }
+  };
+
+  // Helper function to decode base64 to Uint8Array
+  const decode = (base64: string): Uint8Array => {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  };
+
+  const selectImage = () => {
+    setShowImagePickerDialog(true);
+  };
+
+  const pickImage = async (source: 'camera' | 'gallery') => {
+    try {
+      let result;
+      
+      if (source === 'camera') {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission Required', 'Camera permission is required to take photos.');
+          return;
+        }
+        
+        result = await ImagePicker.launchCameraAsync({
+          mediaTypes: 'images' as any,
+          allowsEditing: true,
+          aspect: [1, 1],
+          quality: 0.8,
+        });
+      } else {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission Required', 'Gallery permission is required to select photos.');
+          return;
+        }
+        
+        result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: 'images' as any,
+          allowsEditing: true,
+          aspect: [1, 1],
+          quality: 0.8,
+        });
+      }
+
+      if (!result.canceled && result.assets[0]) {
+        setSelectedImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error picking image:', error);
+      Alert.alert('Error', 'Failed to select image. Please try again.');
+    }
   };
 
   const resetProfile = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert(
-      'Reset Profile',
-      'This will reset your profile data but keep your analysis history. Continue?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reset',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const resetProfile = {
-                ...profile,
-                username: authProfile?.username || authProfile?.full_name || user?.user_metadata?.name || user?.email?.split('@')[0] || 'User',
-                joinDate: authProfile?.created_at || user?.created_at || new Date().toISOString(),
-                achievements: ACHIEVEMENTS,
-              };
-              setProfile(resetProfile);
-              Alert.alert('Success', 'Profile reset successfully');
-            } catch (error) {
-              Alert.alert('Error', 'Failed to reset profile');
-            }
-          }
-        }
-      ]
-    );
+    setShowResetDialog(true);
+  };
+
+  const handleResetConfirm = async () => {
+    try {
+      const resetProfile = {
+        ...profile,
+        username: authProfile?.username || authProfile?.full_name || user?.user_metadata?.name || user?.email?.split('@')[0] || 'User',
+        joinDate: authProfile?.created_at || user?.created_at || new Date().toISOString(),
+        achievements: ACHIEVEMENTS,
+      };
+      setProfile(resetProfile);
+      setShowResetDialog(false);
+      // Show success message with a simple alert for now
+      setTimeout(() => Alert.alert('Success', 'Profile reset successfully'), 100);
+    } catch (error) {
+      setShowResetDialog(false);
+      setTimeout(() => Alert.alert('Error', 'Failed to reset profile'), 100);
+    }
+  };
+
+  const handleSignOutConfirm = async () => {
+    try {
+      await signOut();
+      setShowSignOutDialog(false);
+    } catch (error) {
+      console.error('Sign out error:', error);
+      setShowSignOutDialog(false);
+      setTimeout(() => Alert.alert('Error', 'Failed to sign out. Please try again.'), 100);
+    }
   };
 
   const unlockedAchievements = profile.achievements.filter(a => a.isUnlocked);
@@ -312,9 +477,11 @@ export const ProfileScreen = ({ navigation }: any) => {
           <View style={styles.userInfo}>
             <View style={styles.nameContainer}>
               <Text style={styles.userName}>{profile.username}</Text>
-              <View style={styles.proBadge}>
-                <Text style={styles.proText}>PRO</Text>
-              </View>
+              {hasActiveSubscription && (
+                <View style={styles.proBadge}>
+                  <Text style={styles.proText}>PRO</Text>
+                </View>
+              )}
             </View>
             <Text style={styles.userHandle}>@{profile.username}</Text>
             {authProfile?.email && (
@@ -324,12 +491,73 @@ export const ProfileScreen = ({ navigation }: any) => {
             <Text style={styles.joinDate}>Member since {new Date(profile.joinDate).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</Text>
           </View>
 
+          {/* Subscription Banner - Only show if user doesn't have active subscription */}
+          {!hasActiveSubscription && (
+            <TouchableOpacity
+              style={styles.subscriptionBanner}
+              onPress={async () => {
+                try { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+                navigation.navigate('SubscriptionPlans');
+              }}
+            >
+              <LinearGradient
+                colors={['#F39C12', '#E67E22', '#D35400']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.subscriptionGradient}
+              >
+                <View style={styles.subscriptionContent}>
+                  <View style={styles.subscriptionLeft}>
+                    <Icon name="crown" size={28} color="#FFD700" />
+                    <View style={styles.subscriptionText}>
+                      <Text style={styles.subscriptionTitle}>Upgrade to Premium</Text>
+                      <Text style={styles.subscriptionSubtitle}>Unlock unlimited AI analyses</Text>
+                    </View>
+                  </View>
+                  <Icon name="chevron-right" size={24} color="#FFFFFF" />
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+          )}
+
+          {/* Active Subscription Badge - Show for paid users */}
+          {hasActiveSubscription && subscription && (
+            <TouchableOpacity
+              style={styles.subscriptionBanner}
+              onPress={async () => {
+                try { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+                navigation.navigate('ManageSubscription');
+              }}
+            >
+              <LinearGradient
+                colors={['#3498DB', '#2980B9', '#2471A3']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.subscriptionGradient}
+              >
+                <View style={styles.subscriptionContent}>
+                  <View style={styles.subscriptionLeft}>
+                    <Icon name="crown" size={28} color="#FFD700" />
+                    <View style={styles.subscriptionText}>
+                      <Text style={styles.subscriptionTitle}>{subscription.plan_name} Plan Active</Text>
+                      <Text style={styles.subscriptionSubtitle}>
+                        {subscription.analyses_remaining} of {subscription.analyses_limit} analyses remaining
+                      </Text>
+                    </View>
+                  </View>
+                  <Icon name="chevron-right" size={24} color="#FFFFFF" />
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+          )}
+
           {/* Action Buttons */}
           <View style={styles.actionButtons}>
             <TouchableOpacity
               style={styles.editProfileButton}
               onPress={() => {
                 setEditUsername(profile.username);
+                setSelectedImage(null);
                 setShowEditModal(true);
               }}
             >
@@ -340,25 +568,7 @@ export const ProfileScreen = ({ navigation }: any) => {
               style={styles.logoutButton}
               onPress={async () => {
                 await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                Alert.alert(
-                  'Sign Out',
-                  'Are you sure you want to sign out?',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    { 
-                      text: 'Sign Out', 
-                      style: 'destructive',
-                      onPress: async () => {
-                        try {
-                          await signOut();
-                        } catch (error) {
-                          console.error('Sign out error:', error);
-                          Alert.alert('Error', 'Failed to sign out. Please try again.');
-                        }
-                      }
-                    },
-                  ]
-                );
+                setShowSignOutDialog(true);
               }}
             >
               <Icon name="logout" size={16} color="#FFFFFF" />
@@ -479,9 +689,10 @@ export const ProfileScreen = ({ navigation }: any) => {
             </View>
           </View>
 
+
       </LinearGradient>
 
-      {/* Edit Username Modal */}
+      {/* Edit Profile Modal */}
       <Modal
         visible={showEditModal}
         transparent
@@ -489,32 +700,105 @@ export const ProfileScreen = ({ navigation }: any) => {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Edit Username</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={editUsername}
-              onChangeText={setEditUsername}
-              placeholder="Enter new username"
-              placeholderTextColor={COLORS.textSecondary}
-              maxLength={20}
-            />
+            <Text style={styles.modalTitle}>Edit Profile</Text>
+            
+            {/* Profile Photo Section */}
+            <View style={styles.photoSection}>
+              <Text style={styles.photoLabel}>Profile Photo</Text>
+              <TouchableOpacity style={styles.photoContainer} onPress={selectImage}>
+                {selectedImage ? (
+                  <Image source={{ uri: selectedImage }} style={styles.modalAvatar} />
+                ) : authProfile?.avatar_url ? (
+                  <Image source={{ uri: authProfile.avatar_url }} style={styles.modalAvatar} />
+                ) : (
+                  <View style={[styles.modalAvatar, styles.placeholderAvatar]}>
+                    <Icon name="camera" size={24} color="#FFFFFF" />
+                    <Text style={styles.placeholderText}>Tap to add photo</Text>
+                  </View>
+                )}
+                <View style={styles.cameraIcon}>
+                  <Icon name="camera" size={16} color="#FFFFFF" />
+                </View>
+              </TouchableOpacity>
+            </View>
+            
+            {/* Username Section */}
+            <View style={styles.usernameSection}>
+              <Text style={styles.usernameLabel}>Username</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={editUsername}
+                onChangeText={setEditUsername}
+                placeholder="Enter new username"
+                placeholderTextColor={COLORS.textSecondary}
+                maxLength={20}
+              />
+            </View>
+            
             <View style={styles.modalButtons}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => setShowEditModal(false)}
+                onPress={() => {
+                  setShowEditModal(false);
+                  setSelectedImage(null);
+                }}
+                disabled={isUploading}
               >
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, styles.saveButton]}
-                onPress={handleEditUsername}
+                style={[styles.modalButton, styles.saveButton, isUploading && styles.disabledButton]}
+                onPress={handleEditProfile}
+                disabled={isUploading}
               >
-                <Text style={styles.saveButtonText}>Save</Text>
+                {isUploading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Save</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
+
+      {/* Confirmation Dialogs */}
+      <ConfirmationDialog
+        visible={showSignOutDialog}
+        title="Sign Out"
+        message="Are you sure you want to sign out?"
+        confirmText="Sign Out"
+        cancelText="Cancel"
+        confirmButtonStyle="destructive"
+        onConfirm={handleSignOutConfirm}
+        onCancel={() => setShowSignOutDialog(false)}
+        icon={<Icon name="logout" size={48} color={COLORS.danger} />}
+      />
+
+      <ConfirmationDialog
+        visible={showResetDialog}
+        title="Reset Profile"
+        message="This will reset your profile data but keep your analysis history. Continue?"
+        confirmText="Reset"
+        cancelText="Cancel"
+        confirmButtonStyle="destructive"
+        onConfirm={handleResetConfirm}
+        onCancel={() => setShowResetDialog(false)}
+        icon={<Icon name="refresh" size={48} color={COLORS.warning} />}
+      />
+
+      <ImagePickerDialog
+        visible={showImagePickerDialog}
+        onCamera={() => {
+          setShowImagePickerDialog(false);
+          pickImage('camera');
+        }}
+        onGallery={() => {
+          setShowImagePickerDialog(false);
+          pickImage('gallery');
+        }}
+        onCancel={() => setShowImagePickerDialog(false)}
+      />
     </ScrollView>
   );
 };
@@ -653,6 +937,44 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.5)',
     textAlign: 'center',
     marginTop: 8,
+  },
+  subscriptionBanner: {
+    marginHorizontal: 20,
+    marginBottom: 20,
+    borderRadius: 16,
+    overflow: 'hidden',
+    elevation: 5,
+    shadowColor: '#9333EA',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  subscriptionGradient: {
+    padding: 20,
+  },
+  subscriptionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  subscriptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+  },
+  subscriptionText: {
+    flex: 1,
+  },
+  subscriptionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  subscriptionSubtitle: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.9)',
   },
   actionButtons: {
     flexDirection: 'row',
@@ -837,8 +1159,8 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface,
     borderRadius: 16,
     padding: 24,
-    width: '80%',
-    maxWidth: 300,
+    width: '85%',
+    maxWidth: 350,
   },
   modalTitle: {
     fontSize: 18,
@@ -880,5 +1202,62 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  photoSection: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  photoLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.text,
+    marginBottom: 12,
+  },
+  photoContainer: {
+    position: 'relative',
+  },
+  modalAvatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+  },
+  placeholderAvatar: {
+    backgroundColor: COLORS.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    borderStyle: 'dashed',
+  },
+  placeholderText: {
+    fontSize: 10,
+    color: '#FFFFFF',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  cameraIcon: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: COLORS.surface,
+  },
+  usernameSection: {
+    marginBottom: 20,
+  },
+  usernameLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.text,
+    marginBottom: 8,
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
 });

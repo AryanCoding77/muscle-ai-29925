@@ -11,6 +11,8 @@ import { FireworksAIService } from '../services/api/FireworksAIService';
 import { APIStateManager } from '../services/api/APIStateManager';
 import { CacheManager } from '../services/cache/CacheManager';
 import { QueueManager } from '../services/queue/QueueManager';
+import { canUserAnalyze, incrementUsageCounter } from '../services/subscriptionService';
+import { updateUserStreak } from '../services/streakService';
 
 interface UseAPIAnalysisOptions {
   enableCache?: boolean;
@@ -70,6 +72,29 @@ export const useAPIAnalysis = (options: UseAPIAnalysisOptions = {}) => {
       // Reset state
       console.log('🔄 Resetting analysis state...');
       stateManager.reset();
+      stateManager.setLoading(true, 'Checking subscription...');
+
+      // 🔒 BACKEND VALIDATION: Check if user can analyze
+      console.log('🔒 Checking subscription status from backend...');
+      const canAnalyze = await canUserAnalyze();
+      
+      if (!canAnalyze.can_analyze) {
+        console.error('❌ User cannot analyze:', canAnalyze.subscription_status);
+        const error: APIError = {
+          code: 'SUBSCRIPTION_REQUIRED',
+          message: 'Active subscription required to analyze images',
+          retryable: false,
+          userMessage: canAnalyze.subscription_status === 'none' 
+            ? 'You need an active subscription to analyze images. Please purchase a plan.'
+            : `You have reached your analysis limit. Remaining: ${canAnalyze.analyses_remaining}`,
+        };
+        stateManager.setError(error);
+        stateManager.setLoading(false);
+        onError?.(error);
+        return null;
+      }
+
+      console.log('✅ Subscription valid. Analyses remaining:', canAnalyze.analyses_remaining);
       stateManager.setLoading(true, 'Starting analysis...');
 
       // Check cache first if enabled
@@ -112,6 +137,40 @@ export const useAPIAnalysis = (options: UseAPIAnalysisOptions = {}) => {
       
       if (response.success && response.data) {
         console.log('🎉 Analysis successful, updating state...');
+        
+        // 🔒 BACKEND: Increment usage counter
+        console.log('📊 Incrementing usage counter...');
+        try {
+          const usageResult = await incrementUsageCounter();
+          if (usageResult.success) {
+            console.log('✅ Usage counter updated successfully');
+          } else {
+            console.error('⚠️ Failed to increment usage counter:', usageResult.error);
+          }
+        } catch (usageError) {
+          console.error('⚠️ Error incrementing usage counter:', usageError);
+          // Don't fail the analysis if usage counter fails
+        }
+
+        // 🔥 Update user streak after successful analysis
+        console.log('🔥 Updating user streak...');
+        try {
+          const streakResult = await updateUserStreak();
+          console.log('✅ Streak updated:', streakResult);
+          
+          // Log milestone achievements
+          if (streakResult.milestoneAchieved) {
+            console.log('🏆 Milestone achieved:', streakResult.milestoneAchieved);
+          }
+          
+          if (streakResult.isNewRecord) {
+            console.log('🎉 New personal record! Longest streak:', streakResult.longestStreak);
+          }
+        } catch (streakError) {
+          console.error('⚠️ Error updating streak:', streakError);
+          // Don't fail the analysis if streak update fails
+        }
+        
         setResult(response.data);
         setHistory(prev => [...prev, response.data!]);
         onSuccess?.(response.data);

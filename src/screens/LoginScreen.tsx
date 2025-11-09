@@ -14,10 +14,11 @@ import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAuth } from '../context/AuthContext';
 import { COLORS } from '../config/constants';
+import { Logo } from '../components/ui/Logo';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-export const LoginScreen = () => {
+export const LoginScreen = ({ navigation }: any) => {
   const { signInWithGoogle } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
 
@@ -45,12 +46,9 @@ export const LoginScreen = () => {
           {/* Logo and App Name */}
           <View style={styles.logoSection}>
             <View style={styles.logoContainer}>
-              <LinearGradient
-                colors={['#FF6B35', '#FF8E53']}
-                style={styles.logoGradient}
-              >
-                <Icon name="arm-flex" size={60} color="#FFFFFF" />
-              </LinearGradient>
+              <View style={styles.logoWrapper}>
+                <Logo size={100} />
+              </View>
             </View>
             <Text style={styles.appName}>Muscle AI</Text>
             <Text style={styles.tagline}>AI-Powered Fitness Analysis</Text>
@@ -125,9 +123,28 @@ export const LoginScreen = () => {
               )}
             </TouchableOpacity>
 
-            <Text style={styles.disclaimer}>
-              By signing in, you agree to our Terms of Service and Privacy Policy
-            </Text>
+            <View style={styles.disclaimerContainer}>
+              <Text style={styles.disclaimer}>
+                By signing in, you agree to our{' '}
+              </Text>
+              <TouchableOpacity
+                onPress={async () => {
+                  try { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                  navigation?.navigate('TermsConditions');
+                }}
+              >
+                <Text style={styles.disclaimerLink}>Terms & Conditions</Text>
+              </TouchableOpacity>
+              <Text style={styles.disclaimer}> and </Text>
+              <TouchableOpacity
+                onPress={async () => {
+                  try { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                  navigation?.navigate('PrivacyPolicy');
+                }}
+              >
+                <Text style={styles.disclaimerLink}>Privacy Policy</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
 
@@ -161,12 +178,13 @@ const styles = StyleSheet.create({
   logoContainer: {
     marginBottom: 20,
   },
-  logoGradient: {
+  logoWrapper: {
     width: 120,
     height: 120,
     borderRadius: 30,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     shadowColor: '#FF6B35',
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.3,
@@ -257,13 +275,27 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333333',
   },
+  disclaimerContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 20,
+    paddingHorizontal: 40,
+  },
   disclaimer: {
     fontSize: 12,
     color: 'rgba(255, 255, 255, 0.5)',
     textAlign: 'center',
-    marginTop: 20,
-    paddingHorizontal: 40,
     lineHeight: 16,
+  },
+  disclaimerLink: {
+    fontSize: 12,
+    color: '#FF6B35',
+    textAlign: 'center',
+    lineHeight: 16,
+    textDecorationLine: 'underline',
+    fontWeight: '600',
   },
   backgroundDecoration: {
     position: 'absolute',

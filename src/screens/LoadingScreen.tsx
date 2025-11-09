@@ -7,7 +7,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
+import { Logo } from '../components/ui/Logo';
 
 export const LoadingScreen = () => {
   return (
@@ -18,12 +18,9 @@ export const LoadingScreen = () => {
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.content}>
           <View style={styles.logoContainer}>
-            <LinearGradient
-              colors={['#FF6B35', '#FF8E53']}
-              style={styles.logoGradient}
-            >
-              <Icon name="arm-flex" size={50} color="#FFFFFF" />
-            </LinearGradient>
+            <View style={styles.logoWrapper}>
+              <Logo size={80} />
+            </View>
           </View>
           
           <Text style={styles.appName}>Muscle AI</Text>
@@ -53,12 +50,13 @@ const styles = StyleSheet.create({
   logoContainer: {
     marginBottom: 20,
   },
-  logoGradient: {
+  logoWrapper: {
     width: 100,
     height: 100,
     borderRadius: 25,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     shadowColor: '#FF6B35',
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.3,

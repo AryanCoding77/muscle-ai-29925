@@ -17,6 +17,8 @@ import { Card } from '../components/ui/Card';
 import { StatBadge } from '../components/dashboard/StatBadge';
 import { getAnalysisHistory, deleteAnalysisFromDatabase, AnalysisHistoryRecord } from '../services/supabase';
 import { useAuth } from '../context/AuthContext';
+import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
+import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import type { AnalysisResult } from '../types';
 
 const { width } = Dimensions.get('window');
@@ -24,6 +26,9 @@ const { width } = Dimensions.get('window');
 export const ProgressScreen = ({ navigation }: any) => {
   const [analysisHistory, setAnalysisHistory] = useState<AnalysisResult[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showClearHistoryDialog, setShowClearHistoryDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [selectedAnalysisId, setSelectedAnalysisId] = useState<string | null>(null);
   const { user } = useAuth();
 
   useEffect(() => {
@@ -69,37 +74,56 @@ export const ProgressScreen = ({ navigation }: any) => {
 
   const clearHistory = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert(
-      'Clear History',
-      'This will remove all your analysis history. This action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              if (!user?.id) {
-                Alert.alert('Error', 'Authentication required');
-                return;
-              }
+    setShowClearHistoryDialog(true);
+  };
 
-              // Delete all analyses for this user
-              const deletePromises = analysisHistory.map(analysis => 
-                deleteAnalysisFromDatabase(user.id, analysis.id)
-              );
-              
-              await Promise.all(deletePromises);
-              setAnalysisHistory([]);
-              Alert.alert('Success', 'Analysis history cleared successfully');
-            } catch (error) {
-              console.error('Error clearing history:', error);
-              Alert.alert('Error', 'Failed to clear history');
-            }
-          }
-        }
-      ]
-    );
+  const handleClearHistoryConfirm = async () => {
+    try {
+      if (!user?.id) {
+        setShowClearHistoryDialog(false);
+        setTimeout(() => Alert.alert('Error', 'Authentication required'), 100);
+        return;
+      }
+
+      // Delete all analyses for this user
+      const deletePromises = analysisHistory.map(analysis => 
+        deleteAnalysisFromDatabase(user.id, analysis.id)
+      );
+      
+      await Promise.all(deletePromises);
+      setAnalysisHistory([]);
+      setShowClearHistoryDialog(false);
+      setTimeout(() => Alert.alert('Success', 'Analysis history cleared successfully'), 100);
+    } catch (error) {
+      console.error('Error clearing history:', error);
+      setShowClearHistoryDialog(false);
+      setTimeout(() => Alert.alert('Error', 'Failed to clear history'), 100);
+    }
+  };
+
+  const handleDeleteAnalysis = (analysisId: string) => {
+    setSelectedAnalysisId(analysisId);
+    setShowDeleteDialog(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    try {
+      if (!user?.id || !selectedAnalysisId) {
+        setShowDeleteDialog(false);
+        setTimeout(() => Alert.alert('Error', 'Authentication required'), 100);
+        return;
+      }
+      
+      await deleteAnalysisFromDatabase(user.id, selectedAnalysisId);
+      loadAnalysisHistory();
+      setShowDeleteDialog(false);
+      setSelectedAnalysisId(null);
+    } catch (error) {
+      console.error('Error deleting analysis:', error);
+      setShowDeleteDialog(false);
+      setSelectedAnalysisId(null);
+      setTimeout(() => Alert.alert('Error', 'Failed to delete analysis'), 100);
+    }
   };
 
   const getProgressStats = () => {
@@ -315,7 +339,19 @@ export const ProgressScreen = ({ navigation }: any) => {
                   }
                 >
                   <View style={styles.historyContent}>
-                    <Image source={{ uri: analysis.imageUri }} style={styles.historyThumbnail} />
+                    {analysis.imageUri && analysis.imageUri.trim() !== '' ? (
+                      <Image 
+                        source={{ uri: analysis.imageUri }} 
+                        style={styles.historyThumbnail}
+                        onError={(error) => {
+                          console.warn('Failed to load analysis image:', analysis.imageUri, error);
+                        }}
+                      />
+                    ) : (
+                      <View style={[styles.historyThumbnail, styles.placeholderThumbnail]}>
+                        <Text style={styles.placeholderText}>📸</Text>
+                      </View>
+                    )}
                     <View style={styles.historyInfo}>
                       <Text style={styles.historyDate}>
                         {new Date(analysis.timestamp).toLocaleDateString()}
@@ -335,31 +371,7 @@ export const ProgressScreen = ({ navigation }: any) => {
                       style={styles.deleteButton}
                       onPress={(e) => {
                         e.stopPropagation();
-                        Alert.alert(
-                          'Delete Analysis',
-                          'Are you sure you want to delete this analysis?',
-                          [
-                            { text: 'Cancel', style: 'cancel' },
-                            {
-                              text: 'Delete',
-                              style: 'destructive',
-                              onPress: async () => {
-                                try {
-                                  if (!user?.id) {
-                                    Alert.alert('Error', 'Authentication required');
-                                    return;
-                                  }
-                                  
-                                  await deleteAnalysisFromDatabase(user.id, analysis.id);
-                                  loadAnalysisHistory();
-                                } catch (error) {
-                                  console.error('Error deleting analysis:', error);
-                                  Alert.alert('Error', 'Failed to delete analysis');
-                                }
-                              }
-                            }
-                          ]
-                        );
+                        handleDeleteAnalysis(analysis.id);
                       }}
                     >
                       <Text style={styles.deleteIcon}>✕</Text>
@@ -393,6 +405,34 @@ export const ProgressScreen = ({ navigation }: any) => {
           </View>
         </Card>
       </ScrollView>
+
+      {/* Confirmation Dialogs */}
+      <ConfirmationDialog
+        visible={showClearHistoryDialog}
+        title="Clear History"
+        message="This will remove all your analysis history. This action cannot be undone."
+        confirmText="Clear"
+        cancelText="Cancel"
+        confirmButtonStyle="destructive"
+        onConfirm={handleClearHistoryConfirm}
+        onCancel={() => setShowClearHistoryDialog(false)}
+        icon={<Icon name="delete-sweep" size={48} color={COLORS.danger} />}
+      />
+
+      <ConfirmationDialog
+        visible={showDeleteDialog}
+        title="Delete Analysis"
+        message="Are you sure you want to delete this analysis?"
+        confirmText="Delete"
+        cancelText="Cancel"
+        confirmButtonStyle="destructive"
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => {
+          setShowDeleteDialog(false);
+          setSelectedAnalysisId(null);
+        }}
+        icon={<Icon name="delete" size={48} color={COLORS.danger} />}
+      />
     </SafeAreaView>
   );
 };
@@ -417,6 +457,7 @@ const styles = StyleSheet.create({
   header: {
     alignItems: 'center',
     marginBottom: 30,
+    marginTop: 40,
   },
   title: {
     fontSize: 32,
@@ -663,5 +704,16 @@ const styles = StyleSheet.create({
   },
   spacer: {
     width: 12,
+  },
+  placeholderThumbnail: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  placeholderText: {
+    fontSize: 24,
+    color: COLORS.textSecondary,
   },
 });

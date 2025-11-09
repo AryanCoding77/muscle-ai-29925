@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,9 @@ import {
   ScrollView,
   Dimensions,
   SafeAreaView,
+  Alert,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { COLORS } from '../config/constants';
 import { Card } from '../components/ui/Card';
@@ -16,23 +18,87 @@ import { RingStat } from '../components/dashboard/RingStat';
 import { Chip } from '../components/ui/Chip';
 import { ResponsiveHeader } from '../components/ui/ResponsiveHeader';
 import { useAuth } from '../context/AuthContext';
+import { useNotifications } from '../context/NotificationContext';
+import { getUserSubscriptionDetails } from '../services/subscriptionService';
+import { getAnalysisStatsForDate, DailyAnalysisStats } from '../services/analysisStatsService';
+import { StreakCounter } from '../components/dashboard/StreakCounter';
+import { useStreak } from '../hooks/useStreak';
 
 const { width } = Dimensions.get('window');
 const DAYS = ['S','M','T','W','T','F','S'] as const;
-const DATES = [4,5,6,7,8,9,10] as const;
 
 export const HomeScreen = ({ navigation }: any) => {
   const isSmall = width < 380;
   const ringSize = isSmall ? 90 : 110;
   const { user, profile } = useAuth();
+  const { notificationCount } = useNotifications();
+  const { loadStreakData: refreshStreak } = useStreak();
 
   // Get display name from user data - only first word
   const fullName = profile?.username || profile?.full_name || user?.user_metadata?.name || user?.email?.split('@')[0] || 'User';
   const displayName = fullName.split(' ')[0];
 
+  // Get current date info
+  const now = new Date();
+  const currentDate = now.getDate();
+  const currentDay = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
+  const currentMonth = now.toLocaleString('en-US', { month: 'long' });
+  const currentYear = now.getFullYear();
+
+  // Track selected date
+  const [selectedDate, setSelectedDate] = useState<number>(currentDate);
+  
+  // Track analysis stats
+  const [analysisStats, setAnalysisStats] = useState<DailyAnalysisStats>({
+    analysesCount: 0,
+    averageScore: 0,
+    bestScore: 0,
+    previousDayScore: 0,
+    improvement: 0,
+  });
+  const [loadingStats, setLoadingStats] = useState(false);
+
+  // Generate dates for current week (7 days centered around today)
+  const weekDates = useMemo(() => {
+    const dates = [];
+    const startOffset = 3; // Show 3 days before today
+    for (let i = -startOffset; i <= 3; i++) {
+      const date = new Date(now);
+      date.setDate(currentDate + i);
+      dates.push(date.getDate());
+    }
+    return dates;
+  }, [currentDate]);
+
   const navigateToAnalyze = useCallback(async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    navigation.navigate('Analyze');
+    
+    // Check subscription status before navigating
+    try {
+      const subscription = await getUserSubscriptionDetails();
+      if (subscription?.subscription_status === 'active') {
+        navigation.navigate('Analyze');
+      } else {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        Alert.alert(
+          '🔒 Premium Feature',
+          'You need an active subscription to analyze images. Please purchase a plan to continue.',
+          [
+            {
+              text: 'View Plans',
+              onPress: () => navigation.navigate('SubscriptionPlans'),
+            },
+            {
+              text: 'Cancel',
+              style: 'cancel',
+            },
+          ]
+        );
+      }
+    } catch (error) {
+      console.error('Error checking subscription:', error);
+      navigation.navigate('Analyze'); // Navigate anyway if there's an error
+    }
   }, [navigation]);
 
   const onSettingsPress = useCallback(() => {
@@ -42,29 +108,73 @@ export const HomeScreen = ({ navigation }: any) => {
   }, [navigation]);
 
   const onNotificationPress = useCallback(() => {
-    // Handle notification press - could navigate to notifications screen
-    console.log('Notification pressed');
+    const root = navigation.getParent?.()?.getParent?.();
+    if (root?.navigate) root.navigate('Notifications');
+    else if (navigation.navigate) navigation.navigate('Notifications');
+  }, [navigation]);
+
+  const onProfilePress = useCallback(() => {
+    navigation.navigate('Profile');
+  }, [navigation]);
+
+  const handleDatePress = useCallback(async (date: number) => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedDate(date);
+    console.log('Date pressed:', date);
   }, []);
+
+  // Fetch analysis stats when selected date changes
+  useEffect(() => {
+    const fetchStats = async () => {
+      setLoadingStats(true);
+      const selectedDateObj = new Date(now.getFullYear(), now.getMonth(), selectedDate);
+      const stats = await getAnalysisStatsForDate(selectedDateObj);
+      setAnalysisStats(stats);
+      setLoadingStats(false);
+    };
+
+    fetchStats();
+  }, [selectedDate]);
+
+  // Refresh data when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      // Refresh streak data
+      refreshStreak();
+      
+      // Refresh analysis stats
+      const fetchStats = async () => {
+        setLoadingStats(true);
+        const selectedDateObj = new Date(now.getFullYear(), now.getMonth(), selectedDate);
+        const stats = await getAnalysisStatsForDate(selectedDateObj);
+        setAnalysisStats(stats);
+        setLoadingStats(false);
+      };
+      fetchStats();
+    }, [refreshStreak, selectedDate])
+  );
 
   const colStyle = useMemo(() => [styles.col, isSmall ? styles.fullWidth : undefined], [isSmall]);
 
   return (
     <SafeAreaView style={styles.container}>
+      <ResponsiveHeader
+        userName={displayName}
+        userAvatar={profile?.avatar_url || user?.user_metadata?.avatar_url || user?.user_metadata?.picture}
+        subtitle="Get ready"
+        onSettingsPress={onSettingsPress}
+        onNotificationPress={onNotificationPress}
+        onProfilePress={onProfilePress}
+        notificationCount={notificationCount}
+      />
+      
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <ResponsiveHeader
-          userName={displayName}
-          userAvatar={profile?.avatar_url || user?.user_metadata?.avatar_url || user?.user_metadata?.picture}
-          subtitle="Get ready"
-          onSettingsPress={onSettingsPress}
-          onNotificationPress={onNotificationPress}
-        />
-
         {/* Dashboard (decorative stats to enhance design) */}
         <View style={styles.dashboardSection}>
           {/* Calendar */}
           <Card style={styles.fullCard}>
             <View style={styles.calendarHeader}>
-              <Text style={styles.cardTitle}>August 2025</Text>
+              <Text style={styles.cardTitle}>{currentMonth} {currentYear}</Text>
               <View style={styles.calendarArrows}>
                 <Text style={styles.arrow}>←</Text>
                 <Text style={styles.arrow}>→</Text>
@@ -76,29 +186,69 @@ export const HomeScreen = ({ navigation }: any) => {
               ))}
             </View>
             <View style={styles.calendarDatesRow}>
-              {DATES.map((d) => (
-                <View key={d} style={[styles.calendarDateWrap, d === 7 && styles.calendarSelected]}>
-                  <Text style={[styles.calendarDateText, d === 7 && styles.calendarSelectedText]}>{d}</Text>
-                </View>
+              {weekDates.map((d, index) => (
+                <TouchableOpacity
+                  key={`${d}-${index}`}
+                  style={[styles.calendarDateWrap, d === selectedDate && styles.calendarSelected]}
+                  onPress={() => handleDatePress(d)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.calendarDateText, d === selectedDate && styles.calendarSelectedText]}>{d}</Text>
+                </TouchableOpacity>
               ))}
             </View>
           </Card>
 
-          {/* Quick stats row */}
+          {/* Daily Analysis Stats */}
           <View style={[styles.row, isSmall && styles.wrap]}>
-            <StatBadge label="Calories Burnt" value="1.4k" unit="kCal" icon="🔥" style={colStyle} />
-            <StatBadge label="Distance Covered" value="3.8" unit="km" icon="🏃‍♂️" style={colStyle} />
+            <StatBadge 
+              label="Analyses Done" 
+              value={loadingStats ? "..." : analysisStats.analysesCount.toString()} 
+              unit="total" 
+              icon="📊" 
+              style={colStyle} 
+            />
+            <StatBadge 
+              label="Average Score" 
+              value={loadingStats ? "..." : analysisStats.averageScore.toString()} 
+              unit="%" 
+              icon="📈" 
+              style={colStyle} 
+            />
           </View>
 
-
-          {/* Sleep/heart mini cards */}
           <View style={[styles.row, isSmall && styles.wrap]}>
-            <StatBadge label="Total Hours" value="7.5" unit="hours" icon="🛌" style={colStyle} />
-            <StatBadge label="Time in Bed" value="5.5" unit="hours" icon="🛏️" style={colStyle} />
+            <StatBadge 
+              label="Best Score" 
+              value={loadingStats ? "..." : analysisStats.bestScore.toString()} 
+              unit="%" 
+              icon="🏆" 
+              style={colStyle} 
+            />
+            <StatBadge 
+              label="Previous Day" 
+              value={loadingStats ? "..." : analysisStats.previousDayScore.toString()} 
+              unit="%" 
+              icon="📅" 
+              style={colStyle} 
+            />
           </View>
+
           <View style={[styles.row, isSmall && styles.wrap]}>
-            <StatBadge label="Restfulness" value="82" unit="%" icon="🌙" style={colStyle} />
-            <StatBadge label="Resting HR" value="60" unit="bpm" icon="❤️" style={colStyle} />
+            <StatBadge 
+              label="Improvement" 
+              value={loadingStats ? "..." : (analysisStats.improvement > 0 ? "+" : "") + analysisStats.improvement.toString()} 
+              unit="%" 
+              icon="🚀" 
+              style={colStyle} 
+            />
+            <StreakCounter 
+              style={colStyle}
+              onPress={() => {
+                // TODO: Navigate to streak details or achievements screen
+                console.log('Streak counter pressed');
+              }}
+            />
           </View>
 
         </View>
@@ -117,7 +267,6 @@ export const HomeScreen = ({ navigation }: any) => {
           </TouchableOpacity>
         </Card>
 
-
       </ScrollView>
 
     </SafeAreaView>
@@ -130,7 +279,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
   },
   scrollContent: {
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 20,
   },
   header: {
     alignItems: 'center',
@@ -288,7 +439,7 @@ const styles = StyleSheet.create({
   },
   calendarDayLabel: {
     color: COLORS.textSecondary,
-    width: 24,
+    width: 36,
     textAlign: 'center',
     fontSize: 12,
   },
@@ -298,9 +449,9 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   calendarDateWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -312,7 +463,7 @@ const styles = StyleSheet.create({
   },
   calendarDateText: {
     color: COLORS.text,
-    fontSize: 12,
+    fontSize: 14,
   },
   calendarSelectedText: {
     color: '#FFFFFF',

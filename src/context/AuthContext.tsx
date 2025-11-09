@@ -97,7 +97,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Handle deep links for OAuth callback (supports PKCE code exchange)
   useEffect(() => {
     const handleDeepLink = async (url: string) => {
-      if (!url.includes('auth/callback')) return;
+      console.log('🔗 Deep link received:', url);
+      // Handle both Expo Go URLs and standalone build URLs
+      if (!url.includes('auth') && !url.includes('muscleai') && !url.includes('exp://')) return;
 
       try {
         // Close the in-app browser if it's still open
@@ -118,18 +120,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (code) {
           // Exchange the auth code for a Supabase session
+          console.log('🔑 Deep link: Found code, exchanging for session...');
           try {
             const { data: sessionData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
             if (exchangeError) {
-              console.error('Error exchanging code from deep link:', exchangeError);
+              console.error('❌ Deep link: Error exchanging code:', exchangeError);
             } else if (sessionData?.session) {
+              console.log('✅ Deep link: Session established!');
               setSession(sessionData.session);
               setUser(sessionData.session.user);
               return;
             }
           } catch (err) {
-            console.error('Error in code exchange:', err);
+            console.error('❌ Deep link: Error in code exchange:', err);
           }
+        } else {
+          console.log('⚠️ Deep link: No code found in URL');
         }
 
         // Fallback: check if a session is already available
@@ -148,7 +154,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Handle initial URL if app was opened from a deep link
     Linking.getInitialURL().then((url) => {
-      if (url) handleDeepLink(url);
+      if (url) {
+        console.log('🔗 Initial URL detected:', url);
+        handleDeepLink(url);
+      } else {
+        console.log('ℹ️ No initial URL');
+      }
     });
 
     // Listen for deep links while app is open
@@ -230,19 +241,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithGoogle = async () => {
     try {
-      // Use direct deep link approach to avoid SSL certificate issues
+      // Use Expo's redirect URL which works with both Expo Go and standalone builds
       const redirectUrl = AuthSession.makeRedirectUri({
         scheme: 'muscleai',
-        path: 'auth/callback',
       });
 
-      console.log('Redirect URL:', redirectUrl);
+      console.log('🔗 Redirect URL:', redirectUrl);
+      console.log('🔗 Auth redirect (use this in Supabase):', redirectUrl);
 
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo: redirectUrl,
           skipBrowserRedirect: true,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent',
+          },
         },
       });
 
@@ -253,7 +268,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (data?.url) {
-        console.log('Opening OAuth URL:', data.url);
+        console.log('🌐 Opening OAuth URL:', data.url);
         
         // Open the OAuth URL in browser
         const result = await WebBrowser.openAuthSessionAsync(
@@ -261,9 +276,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           redirectUrl
         );
 
-        console.log('OAuth result:', result);
+        console.log('📱 OAuth result:', result.type, 'url' in result && result.url ? 'with URL' : 'no URL');
 
-        if (result.type === 'success' && result.url) {
+        if (result.type === 'success' && 'url' in result && result.url) {
           // Prefer PKCE: try exchanging authorization code first
           try {
             const redirect = new URL(result.url);
@@ -274,14 +289,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
 
             if (code) {
+              console.log('🔑 Found authorization code, exchanging for session...');
               const { data: sessionData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
               if (exchangeError) {
-                console.error('Error exchanging code:', exchangeError);
+                console.error('❌ Error exchanging code:', exchangeError);
               } else if (sessionData?.session) {
+                console.log('✅ Session established successfully!');
                 setSession(sessionData.session);
                 setUser(sessionData.session.user);
                 return;
               }
+            } else {
+              console.log('⚠️ No authorization code found in callback URL');
             }
 
             // Fallback to implicit tokens in URL fragment (older flows)
@@ -304,15 +323,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.error('Error handling OAuth redirect:', parseErr);
           }
         } else if (result.type === 'cancel' || result.type === 'dismiss') {
-          console.log(`OAuth flow ended with "${result.type}" - checking for established session...`);
-          const { data: sessionData } = await supabase.auth.getSession();
-          if (sessionData?.session) {
-            setSession(sessionData.session);
-            setUser(sessionData.session.user);
-            return;
+          console.log(`⏳ OAuth flow ended with "${result.type}" - checking for established session...`);
+          
+          // Wait a bit for the session to be established
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Check multiple times for session
+          for (let i = 0; i < 5; i++) {
+            const { data: sessionData } = await supabase.auth.getSession();
+            if (sessionData?.session) {
+              console.log('✅ Session found after polling');
+              setSession(sessionData.session);
+              setUser(sessionData.session.user);
+              return;
+            }
+            console.log(`🔄 Attempt ${i + 1}/5: No session yet, waiting...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
           }
+          console.log('❌ No session found after polling');
         } else {
-          console.log('OAuth flow failed:', result);
+          console.log('❌ OAuth flow failed:', result);
         }
       }
     } catch (error) {

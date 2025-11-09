@@ -1,13 +1,18 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, ScrollView, TouchableOpacity, Image, Alert } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { COLORS } from '../config/constants';
 import { useAuth } from '../context/AuthContext';
+import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
+import { DeletionRequestDialog } from '../components/ui/DeletionRequestDialog';
+import { submitAccountDeletionRequest } from '../services/accountDeletionService';
 
 
 export const SettingsScreen = ({ navigation }: any) => {
   const { user, profile: authProfile, signOut } = useAuth();
+  const [showLogoutDialog, setShowLogoutDialog] = useState(false);
+  const [showDeletionDialog, setShowDeletionDialog] = useState(false);
   
   const haptic = async () => {
     try { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
@@ -19,29 +24,60 @@ export const SettingsScreen = ({ navigation }: any) => {
   const avatarUrl = user?.user_metadata?.avatar_url || user?.user_metadata?.picture;
 
   const handleLogout = async () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Logout',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              haptic();
-              await signOut();
-            } catch (error) {
-              console.error('Logout error:', error);
-              Alert.alert('Error', 'Failed to logout. Please try again.');
-            }
-          },
-        },
-      ]
-    );
+    haptic();
+    setShowLogoutDialog(true);
+  };
+
+  const handleLogoutConfirm = async () => {
+    try {
+      await signOut();
+      setShowLogoutDialog(false);
+    } catch (error) {
+      console.error('Logout error:', error);
+      setShowLogoutDialog(false);
+      setTimeout(() => Alert.alert('Error', 'Failed to logout. Please try again.'), 100);
+    }
+  };
+
+  const handleDeleteRequest = () => {
+    haptic();
+    setShowDeletionDialog(true);
+  };
+
+  const handleDeleteConfirm = async (reason: string) => {
+    try {
+      const result = await submitAccountDeletionRequest({ reason });
+      
+      setShowDeletionDialog(false);
+      
+      if (result.success) {
+        setTimeout(() => {
+          Alert.alert(
+            'Request Submitted',
+            result.message,
+            [{ text: 'OK', onPress: () => haptic() }]
+          );
+        }, 300);
+      } else {
+        setTimeout(() => {
+          Alert.alert(
+            'Request Failed',
+            result.message,
+            [{ text: 'OK', onPress: () => haptic() }]
+          );
+        }, 300);
+      }
+    } catch (error) {
+      console.error('Deletion request error:', error);
+      setShowDeletionDialog(false);
+      setTimeout(() => {
+        Alert.alert(
+          'Error',
+          'Failed to submit deletion request. Please try again.',
+          [{ text: 'OK', onPress: () => haptic() }]
+        );
+      }, 300);
+    }
   };
 
   return (
@@ -67,51 +103,56 @@ export const SettingsScreen = ({ navigation }: any) => {
             <Text style={styles.profileName}>{displayName}</Text>
             <Text style={styles.profileEmail}>{displayEmail}</Text>
           </View>
-          <TouchableOpacity onPress={haptic} style={styles.editBtn}>
-            <Icon name="pencil-outline" size={18} color={COLORS.text} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Settings section */}
-        <Text style={styles.sectionTitle}>Settings</Text>
-        <View style={styles.card}>
-          <Row icon="card-account-phone-outline" label="Contact" onPress={haptic} />
-          <View style={styles.rowDivider} />
-          <Row icon="map-marker-outline" label="Location" onPress={haptic} />
-          <View style={styles.rowDivider} />
-          <Row icon="barcode" label="Barcode" onPress={haptic} />
         </View>
 
         {/* Support section */}
         <Text style={styles.sectionTitle}>Support</Text>
         <View style={styles.card}>
-          <Row icon="coffee-outline" label="Likes Coffee With Milk" onPress={haptic} />
+          <Row icon="card-account-phone-outline" label="Contact" onPress={haptic} />
           <View style={styles.rowDivider} />
-          <Row icon="star-outline" label="Points" onPress={haptic} />
-          <View style={styles.rowDivider} />
-          <Row icon="account-arrow-right-outline" label="Visit" onPress={haptic} />
-          <View style={styles.rowDivider} />
-          <Row icon="calendar-blank-outline" label="Calendar" onPress={haptic} />
+          <Row icon="delete-forever" label="Request Account Deletion" onPress={handleDeleteRequest} iconColor="#FF453A" labelColor="#FFFFFF" />
         </View>
-
-        {/* Logout Button */}
+      </ScrollView>
+      
+      {/* Logout Button - Fixed at bottom */}
+      <View style={styles.logoutContainer}>
         <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
           <Icon name="logout" size={20} color="#FF453A" />
           <Text style={styles.logoutText}>Logout</Text>
         </TouchableOpacity>
-      </ScrollView>
+      </View>
+      
+      {/* Logout Confirmation Dialog */}
+      <ConfirmationDialog
+        visible={showLogoutDialog}
+        title="Logout"
+        message="Are you sure you want to logout?"
+        confirmText="Logout"
+        cancelText="Cancel"
+        confirmButtonStyle="destructive"
+        onConfirm={handleLogoutConfirm}
+        onCancel={() => setShowLogoutDialog(false)}
+        icon={<Icon name="logout" size={48} color={COLORS.danger} />}
+      />
+      
+      {/* Deletion Request Dialog */}
+      <DeletionRequestDialog
+        visible={showDeletionDialog}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setShowDeletionDialog(false)}
+      />
     </SafeAreaView>
   );
 };
 
-function Row({ icon, label, onPress }: { icon: string; label: string; onPress?: () => void }) {
+function Row({ icon, label, onPress, iconColor, labelColor }: { icon: string; label: string; onPress?: () => void; iconColor?: string; labelColor?: string }) {
   return (
     <TouchableOpacity activeOpacity={0.7} onPress={onPress} style={styles.row}>
       <View style={styles.rowLeft}>
         <View style={styles.rowIconWrap}>
-          <Icon name={icon as any} size={24} color={COLORS.text} />
+          <Icon name={icon as any} size={24} color={iconColor || COLORS.text} />
         </View>
-        <Text style={styles.rowLabel}>{label}</Text>
+        <Text style={[styles.rowLabel, labelColor && { color: labelColor }]}>{label}</Text>
       </View>
       <Icon name="chevron-right" size={20} color={COLORS.textSecondary} />
     </TouchableOpacity>
@@ -125,7 +166,12 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingBottom: 24,
+    paddingBottom: 16,
+  },
+  logoutContainer: {
+    padding: 16,
+    paddingBottom: 60,
+    backgroundColor: COLORS.background,
   },
   headerBar: {
     flexDirection: 'row',
@@ -243,8 +289,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 69, 58, 0.15)',
     borderRadius: 12,
     paddingVertical: 16,
-    marginTop: 24,
-    marginBottom: 30,
     gap: 8,
   },
   logoutText: {
